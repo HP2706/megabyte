@@ -1,0 +1,6 @@
+
+*.pth
+*.ubyte
+MNIST Dataset/*
+*.png
+*.pyc
