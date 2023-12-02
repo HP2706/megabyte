@@ -25,21 +25,21 @@ class Megabyte_Config:
     patch_size: int = 4
 
     #global model
-    global_d_pre_patch: int = 8
+    global_d_pre_patch: int = 32
     global_d_model =  global_d_pre_patch * patch_size
     global_n_heads = 8
-    global_d_head = 2
-    global_n_layers = 1
-    global_d_mlp = 16
+    global_d_head = 8
+    global_n_layers = 2
+    global_d_mlp = 64
 
     d_vocab : int = 256
     
     #local model
     #global_dropout = 0.1
     local_d_model = 16
-    local_n_heads = 1
-    local_d_head = 2
-    local_n_layers = 1
+    local_n_heads = 4
+    local_d_head = 4
+    local_n_layers = 2
     local_d_mlp = 8
 
     #task
@@ -218,7 +218,6 @@ class LocalModel(nn.Module):
         return x
 
 
-
 class MLP(nn.Module):
     def __init__(self, cfg, is_local : bool):
         super().__init__()
@@ -343,11 +342,11 @@ class VisualTransformer_Config:
 
     #patches dimension
     patch_dim : int = 4
-    global_d_model =  32
+    global_d_model =  128
     global_n_heads = 8
-    global_d_head = 2
-    global_n_layers = 2
-    global_d_mlp = 16
+    global_d_head = 4
+    global_n_layers = 3
+    global_d_mlp = 64
     n_classes = 10 
 
 
@@ -373,7 +372,7 @@ class VisualTransformer(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad) # all params with gradients
 
 
-    def forward(self, images : Tensor, original_img_size : Tuple[int, int])-> Tensor:
+    def forward(self, images : Tensor)-> Tensor:
         #images : [batch, num_patches, patch_dim]
         #returns [batch, 1]
 
@@ -418,15 +417,21 @@ class VisualTransformer(nn.Module):
         return logits
  
 
+import torch
+import torch.nn as  nn
+import torch.nn.functional as F
 
 
 class Bottleneck(nn.Module):
-    def __init__(self, in_channels, out_channels, expansion:int , i_downsample=None, stride=1):
+    expansion = 4
+    def __init__(self, in_channels, out_channels, i_downsample=None, stride=1):
         super(Bottleneck, self).__init__()
-        self.expansion = expansion
         
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0)
         self.batch_norm1 = nn.BatchNorm2d(out_channels)
+        
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=stride, padding=1)
+        self.batch_norm2 = nn.BatchNorm2d(out_channels)
         
         self.conv3 = nn.Conv2d(out_channels, out_channels*self.expansion, kernel_size=1, stride=1, padding=0)
         self.batch_norm3 = nn.BatchNorm2d(out_channels*self.expansion)
@@ -453,11 +458,12 @@ class Bottleneck(nn.Module):
         
         return x
 
-class ResnetBlock(nn.Module):
+class ResBlock(nn.Module):
     expansion = 1
     def __init__(self, in_channels, out_channels, i_downsample=None, stride=1):
-        super(Block, self).__init__()
+        super(ResBlock, self).__init__()
        
+
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, stride=stride, bias=False)
         self.batch_norm1 = nn.BatchNorm2d(out_channels)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, stride=stride, bias=False)
@@ -480,77 +486,73 @@ class ResnetBlock(nn.Module):
       x += identity
       x = self.relu(x)
       return x
-    
+
 
 @dataclass
 class ResNet_Config:
+    layers = [2]
     num_classes : int = 10
-    in_channels : int = 1
-    layer_list  = [2]
-    n_layers : int = 2
-    planes : int = 64
-    expansion : int = 2
+    num_channels : int = 1
 
-
-
+        
 class ResNet(nn.Module):
-    def __init__(self,  cfg: ResNet_Config):
+    def __init__(self, ResBlock, cfg: ResNet_Config):
         super(ResNet, self).__init__()
         self.cfg = cfg
+        self._name = "ResNet"
+        layer_list = cfg.layers
+        num_classes = cfg.num_classes
+        num_channels = cfg.num_channels
+        self.in_channels = 64
         
-        self.conv1 = nn.Conv2d(self.cfg.in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.conv1 = nn.Conv2d(num_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.batch_norm1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU()
         self.max_pool = nn.MaxPool2d(kernel_size = 3, stride=2, padding=1)
+        self.blocks = nn.ModuleList([])
+        for i in range(len(layer_list)):
+            if i == 0:
+                self.blocks.append(self._make_layer(ResBlock, layer_list[i], planes=64))
+            else:
+                self.blocks.append(self._make_layer(ResBlock, layer_list[i], planes=64*(2**i), stride=2))
+            
+        out_channels = 64*(2**(len(layer_list)-1))
         
-        self.layers = nn.ModuleList()
-
-        for i, num_layers in enumerate(self.cfg.layer_list):
-            out_channels = self.cfg.in_channels * 2 if i != 0 else self.cfg.in_channels  # double the number of filters for each block (except the first)
-            stride = 2 if (i != 0) else 1
-            self.layers.append(self._make_layer(Bottleneck, num_layers, self.cfg.planes, stride = stride))
-            self.cfg.in_channels = out_channels  # update the number of input channels for the next block
-                
         self.avgpool = nn.AdaptiveAvgPool2d((1,1))
-        self.fc = nn.Linear(512*self.cfg.expansion, self.cfg.num_classes)
+        self.fc = nn.Linear(out_channels*ResBlock.expansion, num_classes)
         
     def forward(self, x):
         x = self.relu(self.batch_norm1(self.conv1(x)))
-        print("x.shape", x.shape)
         x = self.max_pool(x)
-        print("x.shape", x.shape)
 
-        print("entering layers")
-        for layer in self.layers:
-            print("x.shape", x.shape)
+        for layer in self.blocks:
             x = layer(x)
-        print("exiting layers")
-        print("x.shape", x.shape)
+        
         x = self.avgpool(x)
-        print("x.shape", x.shape)
         x = x.reshape(x.shape[0], -1)
-        print("x.shape", x.shape)
         x = self.fc(x)
         
         return x
-
-    def _make_layer(self, ResBlock : Bottleneck, blocks : list[int], planes : int, stride : int):
+        
+    def _make_layer(self, ResBlock, blocks, planes, stride=1):
         ii_downsample = None
         layers = []
         
-        if stride != 1 or self.cfg.in_channels != planes*self.cfg.expansion:
+        if stride != 1 or self.in_channels != planes*ResBlock.expansion:
             ii_downsample = nn.Sequential(
-                nn.Conv2d(self.cfg.in_channels, planes*self.cfg.expansion, kernel_size=1, stride=stride),
-                nn.BatchNorm2d(planes*self.cfg.expansion)
+                nn.Conv2d(self.in_channels, planes*ResBlock.expansion, kernel_size=1, stride=stride),
+                nn.BatchNorm2d(planes*ResBlock.expansion)
             )
             
-        layers.append(ResBlock(self.cfg.in_channels, planes, i_downsample=ii_downsample, stride=stride, expansion=self.cfg.expansion))
-        self.cfg.in_channels = planes*self.cfg.expansion
+        layers.append(ResBlock(self.in_channels, planes, i_downsample=ii_downsample, stride=stride))
+        self.in_channels = planes*ResBlock.expansion
         
         for i in range(blocks-1):
-            layers.append(ResBlock(self.cfg.in_channels, planes, expansion=self.cfg.expansion))
+            layers.append(ResBlock(self.in_channels, planes))
             
         return nn.Sequential(*layers)
- 
-    def get_param_count(self) -> int:
-        return sum(p.numel() for p in self.parameters() if p.requires_grad) # all params with gradients
+    
+    def get_param_count(self):
+        '''returns the number of parameters in the model'''
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+

@@ -25,8 +25,43 @@ def bytes_to_img(bytes: torch.Tensor, image_shape: Tuple[int, int]) -> np.ndarra
     bytes = bytes.to(dtype=torch.uint8)
     return np.frombuffer(bytes.numpy(), dtype=np.uint8).reshape((-1,) + image_shape).squeeze(0) # batch first
 
+#collate_fn
+
+
+def vit_collate_fn(batch, vit=False):
+    images, labels = zip(*batch) #(Tensor, Tensor)
+    images = torch.from_numpy(np.stack(images)).to(torch.float32)
+    labels = torch.from_numpy(np.stack(labels)).to(torch.int64)
+    #print("labels.shape", labels.shape)
+    images = patch_images(images)
+    return images, labels
+
+def convnet_collate_fn(batch, convnet=False):
+    images, labels = zip(*batch) #(Tensor, Tensor)
+    images = torch.from_numpy(np.stack(images)).to(torch.float32)
+    labels = torch.from_numpy(np.stack(labels)).to(torch.int64)
+    #add channel_dim
+    images = images.unsqueeze(1)
+    return images, labels
+
+#images = patch_images(images) if Vit
+
+def megabyte_collate_fn(batch, type="image"):
+    if type == "image":
+        images, labels = zip(*batch)
+        images = np.stack(images) # we need it to be a numpy array to use patch_images
+        bytes = img_to_bytes(images) # should be integer type
+        labels = torch.Tensor(labels).to(torch.int64)
+        #print("bytes.shape", bytes.shape)
+    elif type == "text":
+        texts, labels = zip(*batch)
+        texts = torch.from_numpy(np.array(texts))
+        bytes = torch.Tensor(text_to_bytes(texts))
+    return bytes, labels 
+
 
 # loading mnist
+
 
 import numpy as np # linear algebra
 import struct

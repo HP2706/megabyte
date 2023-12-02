@@ -4,3 +4,6 @@
 MNIST Dataset/*
 *.png
 *.pyc
+*.pt
+*.pt(index)
+
