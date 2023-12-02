@@ -6,7 +6,10 @@ from typing import Tuple
 def text_to_bytes(texts: list[str]) -> torch.Tensor:
     '''converts text to bytes and returns [batch, seq_len] tensor 
     and pads to max_seq_len in batch with zeros'''
-    return torch.nn.utils.rnn.pad_sequence([torch.Tensor([ord(c) for c in text]).to(dtype=torch.long) for text in texts], batch_first=True)
+    n_bytes = torch.nn.utils.rnn.pad_sequence([torch.Tensor(list(text.encode('ascii', 'replace'))).to(dtype=torch.long) for text in texts], batch_first=True)
+    if torch.max(n_bytes) > 255:
+        raise ValueError('max byte value is greater than 255')
+    return 
 
 def bytes_to_text(bytes: torch.Tensor) -> list[str]:
     '''converts bytes in torch.Tensor to text'''

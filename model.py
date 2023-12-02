@@ -151,9 +151,9 @@ class Patch_Embedder(nn.Module):
         self.global_pad = nn.Parameter(torch.randn(1, 1, cfg.patch_size * cfg.global_d_pre_patch))
         self.local_pad = nn.Parameter(torch.randn(1,1, cfg.local_d_model))
     def forward(self, x: Tensor) -> Tensor:
+        '''embeds from bytes and adds positional embedding and create padding_token_in_beginning and removes the last patch'''
         # x is [batch, byte_sequence]
         # divide byte_sequence into patches of size patch_size
-
         byte_embeddings = self.byte_embedding_global(x)
         seq_length = x.size(1)
         positional_embeddings = self.global_pos_embed[:, :seq_length, :]
@@ -171,7 +171,6 @@ class Patch_Embedder(nn.Module):
         padded_embeddings = torch.cat([self.global_pad.expand(batch_size, -1, -1), patched_embeddings], dim=1)
         if self.cfg.debug :  print("padded_embeddings.shape", padded_embeddings.shape)
         if self.cfg.debug :  print("padded_embeddings[:, :-1, :]", padded_embeddings[:, :-1, :].shape)
-
         return padded_embeddings[:, :-1, :]  # Remove the last patch
 
 
